@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 use std::f32::consts::PI;
+use bevy_mod_picking::*;
+use rand::random;
 
+struct ChessPiece;
 
 enum PieceColor {
     White,
@@ -31,9 +34,9 @@ struct Meshes {
     pawn: Handle<Mesh>
 }
 
-struct Materials {
-    white_material: Handle<StandardMaterial>,
-    black_material: Handle<StandardMaterial>
+struct Textures {
+    texture_white: Handle<Texture>,
+    texture_black: Handle<Texture>
 }
 
 fn board_to_global(position: BoardPosition) -> Vec3 {
@@ -42,71 +45,73 @@ fn board_to_global(position: BoardPosition) -> Vec3 {
                      -(position.y as f32 - 3.5));
 }
 
-fn piece_spawner(commands: &mut Commands, materials: Res<Materials>, meshes: Res<Meshes>) {
+fn piece_spawner(commands: &mut Commands, textures: Res<Textures>,
+                 mut materials: ResMut<Assets<StandardMaterial>>, meshes: Res<Meshes>) {
     for i in 0..8 {
-        spawn_piece(commands, &materials, &meshes,
+        spawn_piece(commands, &textures, &mut materials, &meshes,
                     PieceType::Pawn, PieceColor::White,
                     BoardPosition { x: i, y: 1 });
-        spawn_piece(commands, &materials, &meshes,
+        spawn_piece(commands, &textures, &mut materials, &meshes,
                     PieceType::Pawn, PieceColor::Black,
                     BoardPosition { x: i, y: 6 });
     }
 
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::White,
                 BoardPosition {x: 0, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::White,
                 BoardPosition {x: 7, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::Black,
                 BoardPosition {x: 0, y: 7});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::Black,
                 BoardPosition {x: 7, y: 7});
 
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::White,
                 BoardPosition {x: 1, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::White,
                 BoardPosition {x: 6, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::Black,
                 BoardPosition {x: 1, y: 7});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::Black,
                 BoardPosition {x: 6, y: 7});
 
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::White,
                 BoardPosition {x: 2, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::White,
                 BoardPosition {x: 5, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::Black,
                 BoardPosition {x: 2, y: 7});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::Black,
                 BoardPosition {x: 5, y: 7});
 
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Queen, PieceColor::White,
                 BoardPosition {x: 3, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Queen, PieceColor::Black,
                 BoardPosition {x: 3, y: 7});
 
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::King, PieceColor::White,
                 BoardPosition {x: 4, y: 0});
-    spawn_piece(commands, &materials, &meshes,
+    spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::King, PieceColor::Black,
                 BoardPosition {x: 4, y: 7});
 }
 
-fn spawn_piece(commands: &mut Commands, materials: &Res<Materials>, meshes: &Res<Meshes>,
+fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
+               materials: &mut ResMut<Assets<StandardMaterial>>, meshes: &Res<Meshes>,
                piece_type: PieceType, color: PieceColor, position: BoardPosition) {
 
     let mesh = match piece_type {
@@ -118,9 +123,9 @@ fn spawn_piece(commands: &mut Commands, materials: &Res<Materials>, meshes: &Res
         PieceType::Pawn => meshes.pawn.clone()
     };
 
-    let material = match color {
-        PieceColor::White => materials.white_material.clone(),
-        PieceColor::Black => materials.black_material.clone()
+    let texture = match color {
+        PieceColor::White => textures.texture_white.clone(),
+        PieceColor::Black => textures.texture_black.clone()
     };
 
     let rotation_rad: f32 = match color {
@@ -130,16 +135,45 @@ fn spawn_piece(commands: &mut Commands, materials: &Res<Materials>, meshes: &Res
 
     commands.spawn(PbrBundle {
         mesh,
-        material,
+        material: materials.add(StandardMaterial {
+            albedo_texture: Some(texture.clone()),
+            ..Default::default()
+        }),
         transform: Transform {
             translation: board_to_global(position),
             rotation: Quat::from_rotation_y(rotation_rad),
             ..Default::default()
         },
         ..Default::default()})
+        .with(PickableMesh::default())
+        .with(InteractableMesh::default())
+        // .with(SelectablePickMesh::default())
         .with(piece_type)
         .with(color)
-        .with(position);
+        .with(position)
+        .with(ChessPiece);
+}
+
+fn piece_raycast_system(
+    mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), (With<ChessPiece>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>) {
+
+    for (interactable, entity, mut material_handle) in &mut query.iter_mut() {
+        let mouse_down_event = interactable
+            .mouse_down_event(&Group::default(), MouseButton::Left)
+            .unwrap();
+
+        if mouse_down_event.is_none() {
+            continue;
+        }
+
+        if let MouseDownEvents::MouseJustReleased = mouse_down_event {
+            let material = materials.get_mut(material_handle).unwrap();
+
+            material.albedo_texture = None;
+            material.albedo = Color::rgb(random(), random(), random());
+        }
+    }
 }
 
 fn setup(
@@ -171,6 +205,7 @@ fn setup(
                 .looking_at(Vec3::default(), Vec3::unit_y()),
             ..Default::default()
         })
+        .with(PickSource::default())
         .insert_resource(Meshes {
             king: asset_server.load("models/pawns.glb#Mesh4/Primitive0"),
             queen: asset_server.load("models/pawns.glb#Mesh5/Primitive0"),
@@ -179,21 +214,9 @@ fn setup(
             knight: asset_server.load("models/pawns.glb#Mesh3/Primitive0"),
             pawn: asset_server.load("models/pawns.glb#Mesh0/Primitive0")
         })
-        .insert_resource(Materials {
-            white_material: materials.add(StandardMaterial {
-                albedo: Color::rgb(1.0, 1.0, 1.0),
-                // Bright metal for White
-                albedo_texture: Some(asset_server.load("textures/cc0textures.com/Metal024_1K_Color.png")),
-                shaded: true,
-                ..Default::default()
-            }),
-            black_material: materials.add(StandardMaterial {
-                albedo: Color::rgb(1.0, 1.0, 1.0),
-                // Dark rusty texture for Black
-                albedo_texture: Some(asset_server.load("textures/cc0textures.com/Rust004_1K_Color.png")),
-                shaded: true,
-                ..Default::default()
-            })
+        .insert_resource(Textures {
+            texture_white: asset_server.load("textures/cc0textures.com/Metal024_1K_Color.png"),
+            texture_black: asset_server.load("textures/cc0textures.com/Rust004_1K_Color.png")
         });
 }
 
@@ -201,7 +224,10 @@ fn main() {
     App::build()
         .add_resource(ClearColor(Color::rgb(0.2, 0.2, 0.2)))
         .add_plugins(DefaultPlugins)
+        .add_plugin(PickingPlugin)
+        .add_plugin(InteractablePickingPlugin)
         .add_startup_system(setup.system())
         .add_startup_stage("spawn_pieces", SystemStage::single(piece_spawner.system()))
+        .add_system(piece_raycast_system.system())
         .run();
 }

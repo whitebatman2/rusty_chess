@@ -1,5 +1,6 @@
 # Rusty Chess
-Chess game written in Rust with rusty textures. Uses the Bevy game engine.
+Chess game written in Rust with rusty textures using the Bevy game engine.
+### Warning: This game is a work in progress right now.
 
 ## License
 This game is licensed under the MIT license, see [LICENSE](LICENSE.md) for more details.
