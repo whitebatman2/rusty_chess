@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use std::f32::consts::PI;
 use bevy_mod_picking::*;
 use rand::random;
+use crate::GameState::WaitingForSelect;
+use bevy::input::gamepad::GamepadButtonType::Select;
 
 struct ChessPiece;
 
@@ -37,6 +39,19 @@ struct Meshes {
 struct Textures {
     texture_white: Handle<Texture>,
     texture_black: Handle<Texture>
+}
+
+struct SelectedPiece;
+struct MovingPiece;
+
+struct SharedData {
+    game_state: GameState
+}
+
+enum GameState {
+    WaitingForSelect,
+    PieceSelected,
+    PieceMoving
 }
 
 fn board_to_global(position: BoardPosition) -> Vec3 {
@@ -155,8 +170,11 @@ fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
 }
 
 fn piece_raycast_system(
+    commands: &mut Commands,
     mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), (With<ChessPiece>)>,
-    mut materials: ResMut<Assets<StandardMaterial>>) {
+    mut query2: Query<(Entity, &Handle<StandardMaterial>, &PieceColor), (With<SelectedPiece>)>,
+    textures: Res<Textures>,
+    mut materials: ResMut<Assets<StandardMaterial>>, mut shared_data: ResMut<SharedData>) {
 
     for (interactable, entity, mut material_handle) in &mut query.iter_mut() {
         let mouse_down_event = interactable
@@ -168,10 +186,35 @@ fn piece_raycast_system(
         }
 
         if let MouseDownEvents::MouseJustReleased = mouse_down_event {
-            let material = materials.get_mut(material_handle).unwrap();
+            if let GameState::PieceSelected = shared_data.game_state {
+                for (entity, mut material_handle, piece_color) in query2.iter() {
+                    commands.remove_one::<SelectedPiece>(entity);
 
-            material.albedo_texture = None;
-            material.albedo = Color::rgb(random(), random(), random());
+                    let texture = match piece_color {
+                        PieceColor::White => textures.texture_white.clone(),
+                        PieceColor::Black => textures.texture_black.clone()
+                    };
+
+                    let material = materials.get_mut(material_handle).unwrap();
+                    material.albedo = Color::WHITE;
+                    material.albedo_texture = Some(texture);
+                }
+
+                shared_data.game_state = GameState::WaitingForSelect;
+            }
+
+            match shared_data.game_state {
+                GameState::PieceSelected | GameState::WaitingForSelect => {
+                    let material = materials.get_mut(material_handle).unwrap();
+
+                    material.albedo_texture = None;
+                    material.albedo = Color::rgb(0.0, 0.0, 1.0);
+
+                    shared_data.game_state = GameState::PieceSelected;
+                    commands.insert(entity, (SelectedPiece, ));
+                },
+                _ => ()
+            }
         }
     }
 }
@@ -217,6 +260,9 @@ fn setup(
         .insert_resource(Textures {
             texture_white: asset_server.load("textures/cc0textures.com/Metal024_1K_Color.png"),
             texture_black: asset_server.load("textures/cc0textures.com/Rust004_1K_Color.png")
+        })
+        .insert_resource(SharedData {
+            game_state: WaitingForSelect
         });
 }
 
