@@ -4,8 +4,10 @@ use bevy_mod_picking::*;
 use rand::random;
 use crate::GameState::WaitingForSelect;
 use bevy::input::gamepad::GamepadButtonType::Select;
+use bevy::window::WindowId;
 
 struct ChessPiece;
+struct ChessBoard;
 
 enum PieceColor {
     White,
@@ -21,7 +23,7 @@ enum PieceType {
     Pawn
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct BoardPosition {
     x: u8,
     y: u8
@@ -45,7 +47,8 @@ struct SelectedPiece;
 struct MovingPiece;
 
 struct SharedData {
-    game_state: GameState
+    game_state: GameState,
+    cursor_board_pos: BoardPosition
 }
 
 enum GameState {
@@ -171,8 +174,8 @@ fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
 
 fn piece_raycast_system(
     commands: &mut Commands,
-    mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), (With<ChessPiece>)>,
-    mut query2: Query<(Entity, &Handle<StandardMaterial>, &PieceColor), (With<SelectedPiece>)>,
+    mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), With<ChessPiece>>,
+    mut query2: Query<(Entity, &Handle<StandardMaterial>, &PieceColor), With<SelectedPiece>>,
     textures: Res<Textures>,
     mut materials: ResMut<Assets<StandardMaterial>>, mut shared_data: ResMut<SharedData>) {
 
@@ -219,6 +222,74 @@ fn piece_raycast_system(
     }
 }
 
+fn board_raycast_system(
+    commands: &mut Commands,
+    mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), With<ChessBoard>>,
+    mut query2: Query<(Entity, &mut Transform, &mut BoardPosition, &Handle<StandardMaterial>, &PieceColor), With<SelectedPiece>>,
+    textures: Res<Textures>,
+    mut materials: ResMut<Assets<StandardMaterial>>, mut shared_data: ResMut<SharedData>) {
+
+    if let GameState::PieceSelected = shared_data.game_state {
+        let mut flag = false;
+
+        for (interactable, entity, mut material_handle) in &mut query.iter_mut() {
+            let mouse_down_event = interactable
+                .mouse_down_event(&Group::default(), MouseButton::Left)
+                .unwrap();
+
+            if mouse_down_event.is_none() {
+                continue;
+            }
+
+            if let MouseDownEvents::MouseJustReleased = mouse_down_event {
+                shared_data.game_state = GameState::WaitingForSelect;
+                commands.insert(entity, (SelectedPiece, ));
+
+                flag = true;
+            }
+        }
+
+        if flag {
+            for (entity, mut transform, mut board_position,
+                 mut material_handle, piece_color) in query2.iter_mut() {
+                commands.remove_one::<SelectedPiece>(entity);
+
+                let texture = match piece_color {
+                    PieceColor::White => textures.texture_white.clone(),
+                    PieceColor::Black => textures.texture_black.clone()
+                };
+
+                let material = materials.get_mut(material_handle).unwrap();
+                material.albedo = Color::WHITE;
+                material.albedo_texture = Some(texture);
+
+                board_position.x = shared_data.cursor_board_pos.x;
+                board_position.y = shared_data.cursor_board_pos.y;
+
+                transform.translation = board_to_global(shared_data.cursor_board_pos);
+            }
+        }
+    }
+}
+
+fn get_board_pos(
+    pick_state: Res<PickState>,
+    mut shared_data: ResMut<SharedData>
+) {
+    let pick = pick_state.top(Group::default());
+
+    match pick {
+        Some((entity, intersection)) => {
+            let pos = intersection.position();
+
+            let board_pos = BoardPosition {x: (pos.x + 4.).floor() as u8,
+                                           y: (-pos.z + 4.).floor() as u8};
+            shared_data.cursor_board_pos = board_pos;
+        },
+        None => ()
+    }
+}
+
 fn setup(
     commands: &mut Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -235,6 +306,9 @@ fn setup(
         ),
         ..Default::default()
     })
+        .with(PickableMesh::default())
+        .with(InteractableMesh::default())
+        .with(ChessBoard)
         .spawn(LightBundle {
             transform: Transform::from_translation(Vec3::new(0.0, 10.0, 10.0)),
             light: Light {
@@ -262,7 +336,8 @@ fn setup(
             texture_black: asset_server.load("textures/cc0textures.com/Rust004_1K_Color.png")
         })
         .insert_resource(SharedData {
-            game_state: WaitingForSelect
+            game_state: WaitingForSelect,
+            cursor_board_pos: BoardPosition {x: 0, y: 0}
         });
 }
 
@@ -275,5 +350,7 @@ fn main() {
         .add_startup_system(setup.system())
         .add_startup_stage("spawn_pieces", SystemStage::single(piece_spawner.system()))
         .add_system(piece_raycast_system.system())
+        .add_system(board_raycast_system.system())
+        .add_system(get_board_pos.system())
         .run();
 }
