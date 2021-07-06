@@ -15,6 +15,7 @@ enum PieceColor {
     Black
 }
 
+#[derive(Copy, Clone)]
 enum PieceType {
     King,
     Queen,
@@ -47,10 +48,17 @@ struct Textures {
 struct SelectedPiece;
 struct MovingPiece;
 
+#[derive(Copy, Clone)]
+struct LogicChessPiece {
+    piece_color: PieceColor,
+    piece_type: PieceType,
+}
+
 struct SharedData {
     game_state: GameState,
     cursor_board_pos: BoardPosition,
-    current_move: PieceColor
+    current_move: PieceColor,
+    board: Vec<Vec<Option<LogicChessPiece>>>
 }
 
 enum GameState {
@@ -66,73 +74,95 @@ fn board_to_global(position: BoardPosition) -> Vec3 {
 }
 
 fn piece_spawner(commands: &mut Commands, textures: Res<Textures>,
-                 mut materials: ResMut<Assets<StandardMaterial>>, meshes: Res<Meshes>) {
+                 mut materials: ResMut<Assets<StandardMaterial>>, meshes: Res<Meshes>,
+                 mut shared_data: ResMut<SharedData>) {
     for i in 0..8 {
         spawn_piece(commands, &textures, &mut materials, &meshes,
                     PieceType::Pawn, PieceColor::White,
-                    BoardPosition { x: i, y: 1 });
+                    BoardPosition { x: i, y: 1 },
+                    &mut shared_data.board);
         spawn_piece(commands, &textures, &mut materials, &meshes,
                     PieceType::Pawn, PieceColor::Black,
-                    BoardPosition { x: i, y: 6 });
+                    BoardPosition { x: i, y: 6 },
+                    &mut shared_data.board);
     }
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::White,
-                BoardPosition {x: 0, y: 0});
+                BoardPosition {x: 0, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::White,
-                BoardPosition {x: 7, y: 0});
+                BoardPosition {x: 7, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::Black,
-                BoardPosition {x: 0, y: 7});
+                BoardPosition {x: 0, y: 7},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::Black,
-                BoardPosition {x: 7, y: 7});
+                BoardPosition {x: 7, y: 7},
+                &mut shared_data.board);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::White,
-                BoardPosition {x: 1, y: 0});
+                BoardPosition {x: 1, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::White,
-                BoardPosition {x: 6, y: 0});
+                BoardPosition {x: 6, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::Black,
-                BoardPosition {x: 1, y: 7});
+                BoardPosition {x: 1, y: 7},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::Black,
-                BoardPosition {x: 6, y: 7});
+                BoardPosition {x: 6, y: 7},
+                &mut shared_data.board);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::White,
-                BoardPosition {x: 2, y: 0});
+                BoardPosition {x: 2, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::White,
-                BoardPosition {x: 5, y: 0});
+                BoardPosition {x: 5, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::Black,
-                BoardPosition {x: 2, y: 7});
+                BoardPosition {x: 2, y: 7},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::Black,
-                BoardPosition {x: 5, y: 7});
+                BoardPosition {x: 5, y: 7},
+                &mut shared_data.board);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Queen, PieceColor::White,
-                BoardPosition {x: 3, y: 0});
+                BoardPosition {x: 3, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Queen, PieceColor::Black,
-                BoardPosition {x: 3, y: 7});
+                BoardPosition {x: 3, y: 7},
+                &mut shared_data.board);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::King, PieceColor::White,
-                BoardPosition {x: 4, y: 0});
+                BoardPosition {x: 4, y: 0},
+                &mut shared_data.board);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::King, PieceColor::Black,
-                BoardPosition {x: 4, y: 7});
+                BoardPosition {x: 4, y: 7},
+                &mut shared_data.board);
+
+    print_board(&shared_data.board);
 }
 
 fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
                materials: &mut ResMut<Assets<StandardMaterial>>, meshes: &Res<Meshes>,
-               piece_type: PieceType, color: PieceColor, position: BoardPosition) {
+               piece_type: PieceType, color: PieceColor, position: BoardPosition,
+               board: &mut Vec<Vec<Option<LogicChessPiece>>>) {
 
     let mesh = match piece_type {
         PieceType::King => meshes.king.clone(),
@@ -153,6 +183,11 @@ fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
         PieceColor::Black => PI
     };
 
+    board[usize::from(position.y)][usize::from(position.x)] = Some(LogicChessPiece {
+        piece_color: color,
+        piece_type: piece_type.clone()
+    });
+
     commands.spawn(PbrBundle {
         mesh,
         material: materials.add(StandardMaterial {
@@ -167,7 +202,6 @@ fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
         ..Default::default()})
         .with(PickableMesh::default())
         .with(InteractableMesh::default())
-        // .with(SelectablePickMesh::default())
         .with(piece_type)
         .with(color)
         .with(position)
@@ -227,7 +261,7 @@ fn piece_raycast_system(
 fn board_raycast_system(
     commands: &mut Commands,
     mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), With<ChessBoard>>,
-    mut query2: Query<(Entity, &mut Transform, &mut BoardPosition, &Handle<StandardMaterial>, &PieceColor), With<SelectedPiece>>,
+    mut query2: Query<(Entity, &mut Transform, &mut BoardPosition, &Handle<StandardMaterial>, &PieceColor, &PieceType), With<SelectedPiece>>,
     textures: Res<Textures>,
     mut materials: ResMut<Assets<StandardMaterial>>, mut shared_data: ResMut<SharedData>) {
 
@@ -253,7 +287,7 @@ fn board_raycast_system(
 
         if flag {
             for (entity, mut transform, mut board_position,
-                 mut material_handle, piece_color) in query2.iter_mut() {
+                 mut material_handle, piece_color, piece_type) in query2.iter_mut() {
                 commands.remove_one::<SelectedPiece>(entity);
 
                 let texture = match piece_color {
@@ -265,8 +299,17 @@ fn board_raycast_system(
                 material.albedo = Color::WHITE;
                 material.albedo_texture = Some(texture);
 
+                shared_data.board[usize::from(board_position.y)][usize::from(board_position.x)] = None;
+
                 board_position.x = shared_data.cursor_board_pos.x;
                 board_position.y = shared_data.cursor_board_pos.y;
+
+                shared_data.board[usize::from(board_position.y)][usize::from(board_position.x)] = Some(LogicChessPiece {
+                    piece_color: piece_color.clone(),
+                    piece_type: piece_type.clone()
+                });
+
+                print_board(&shared_data.board);
 
                 transform.translation = board_to_global(shared_data.cursor_board_pos);
 
@@ -345,8 +388,45 @@ fn setup(
         .insert_resource(SharedData {
             game_state: WaitingForSelect,
             cursor_board_pos: BoardPosition {x: 0, y: 0},
-            current_move: PieceColor::White
+            current_move: PieceColor::White,
+            board: vec![vec![None; 8]; 8]
         });
+}
+
+fn print_board(board: &Vec<Vec<Option<LogicChessPiece>>>) {
+    for i in board.iter().rev() {
+        for j in i.iter() {
+            let symbol = match j {
+                None => " ",
+                Some(piece) => {
+                    if let PieceColor::White = piece.piece_color {
+                        match piece.piece_type {
+                            PieceType::King => "♔",
+                            PieceType::Queen => "♕",
+                            PieceType::Rook => "♖",
+                            PieceType::Bishop => "♗",
+                            PieceType::Knight => "♘",
+                            PieceType::Pawn => "♙"
+                        }
+                    } else {
+                        match piece.piece_type {
+                            PieceType::King => "♚",
+                            PieceType::Queen => "♛",
+                            PieceType::Rook => "♜",
+                            PieceType::Bishop => "♝",
+                            PieceType::Knight => "♞",
+                            PieceType::Pawn => "♟"
+                        }
+                    }
+                }
+            };
+
+            print!("{}", symbol);
+
+        }
+
+        println!();
+    }
 }
 
 fn main() {
