@@ -9,6 +9,7 @@ use bevy::window::WindowId;
 struct ChessPiece;
 struct ChessBoard;
 
+#[derive(Copy, Clone, PartialEq)]
 enum PieceColor {
     White,
     Black
@@ -48,7 +49,8 @@ struct MovingPiece;
 
 struct SharedData {
     game_state: GameState,
-    cursor_board_pos: BoardPosition
+    cursor_board_pos: BoardPosition,
+    current_move: PieceColor
 }
 
 enum GameState {
@@ -174,17 +176,17 @@ fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
 
 fn piece_raycast_system(
     commands: &mut Commands,
-    mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), With<ChessPiece>>,
+    mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>, &PieceColor), With<ChessPiece>>,
     mut query2: Query<(Entity, &Handle<StandardMaterial>, &PieceColor), With<SelectedPiece>>,
     textures: Res<Textures>,
     mut materials: ResMut<Assets<StandardMaterial>>, mut shared_data: ResMut<SharedData>) {
 
-    for (interactable, entity, mut material_handle) in &mut query.iter_mut() {
+    for (interactable, entity, mut material_handle, piece_color) in &mut query.iter_mut() {
         let mouse_down_event = interactable
             .mouse_down_event(&Group::default(), MouseButton::Left)
             .unwrap();
 
-        if mouse_down_event.is_none() {
+        if mouse_down_event.is_none() || piece_color != &shared_data.current_move {
             continue;
         }
 
@@ -267,6 +269,11 @@ fn board_raycast_system(
                 board_position.y = shared_data.cursor_board_pos.y;
 
                 transform.translation = board_to_global(shared_data.cursor_board_pos);
+
+                shared_data.current_move = match shared_data.current_move {
+                    PieceColor::White => PieceColor::Black,
+                    PieceColor::Black => PieceColor::White
+                }
             }
         }
     }
@@ -337,7 +344,8 @@ fn setup(
         })
         .insert_resource(SharedData {
             game_state: WaitingForSelect,
-            cursor_board_pos: BoardPosition {x: 0, y: 0}
+            cursor_board_pos: BoardPosition {x: 0, y: 0},
+            current_move: PieceColor::White
         });
 }
 
