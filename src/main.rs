@@ -60,7 +60,8 @@ struct SharedData {
     game_state: GameState,
     cursor_board_pos: BoardPosition,
     current_move: PieceColor,
-    board: Vec<Vec<Option<LogicChessPiece>>>
+    board: Vec<Vec<Option<LogicChessPiece>>>,
+    initial_pos: Vec<Vec<bool>>
 }
 
 enum GameState {
@@ -82,87 +83,89 @@ fn piece_spawner(commands: &mut Commands, textures: Res<Textures>,
         spawn_piece(commands, &textures, &mut materials, &meshes,
                     PieceType::Pawn, PieceColor::White,
                     BoardPosition { x: i, y: 1 },
-                    &mut shared_data.board);
+                    &mut shared_data);
         spawn_piece(commands, &textures, &mut materials, &meshes,
                     PieceType::Pawn, PieceColor::Black,
                     BoardPosition { x: i, y: 6 },
-                    &mut shared_data.board);
+                    &mut shared_data);
     }
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::White,
                 BoardPosition {x: 0, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::White,
                 BoardPosition {x: 7, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::Black,
                 BoardPosition {x: 0, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Rook, PieceColor::Black,
                 BoardPosition {x: 7, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::White,
                 BoardPosition {x: 1, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::White,
                 BoardPosition {x: 6, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::Black,
                 BoardPosition {x: 1, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Knight, PieceColor::Black,
                 BoardPosition {x: 6, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::White,
                 BoardPosition {x: 2, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::White,
                 BoardPosition {x: 5, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::Black,
                 BoardPosition {x: 2, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Bishop, PieceColor::Black,
                 BoardPosition {x: 5, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Queen, PieceColor::White,
                 BoardPosition {x: 3, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::Queen, PieceColor::Black,
                 BoardPosition {x: 3, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
 
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::King, PieceColor::White,
                 BoardPosition {x: 4, y: 0},
-                &mut shared_data.board);
+                &mut shared_data);
     spawn_piece(commands, &textures, &mut materials, &meshes,
                 PieceType::King, PieceColor::Black,
                 BoardPosition {x: 4, y: 7},
-                &mut shared_data.board);
+                &mut shared_data);
 }
 
 fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
                materials: &mut ResMut<Assets<StandardMaterial>>, meshes: &Res<Meshes>,
                piece_type: PieceType, color: PieceColor, position: BoardPosition,
-               board: &mut Vec<Vec<Option<LogicChessPiece>>>) {
+               shared_data: &mut SharedData) {
+
+    let (board, initial_pos) = (&mut shared_data.board, &mut shared_data.initial_pos);
 
     let mesh = match piece_type {
         PieceType::King => meshes.king.clone(),
@@ -187,6 +190,7 @@ fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
         piece_color: color,
         piece_type: piece_type.clone()
     });
+    initial_pos[usize::from(position.y)][usize::from(position.x)] = true;
 
     commands.spawn(PbrBundle {
         mesh,
@@ -312,11 +316,13 @@ fn board_raycast_system(
 
                 let possible = match dest_field {
                     None => {
+                        let initial_pos = shared_data.initial_pos[usize::from(board_position.y)][usize::from(board_position.x)];
+
                         if *piece_type != PieceType::Knight {
-                            check_move_pattern(*piece_type, *piece_color, move_vec)
+                            check_move_pattern(*piece_type, *piece_color, move_vec, initial_pos)
                             && !check_move_blocked(&shared_data.board, (*board_position, shared_data.cursor_board_pos))
                         } else {
-                            check_move_pattern(*piece_type, *piece_color, move_vec)
+                            check_move_pattern(*piece_type, *piece_color, move_vec, initial_pos)
                         }
                     },
                     Some(dest_piece) => {
@@ -350,6 +356,7 @@ fn board_raycast_system(
                     continue;
                 }
 
+                shared_data.initial_pos[usize::from(board_position.y)][usize::from(board_position.x)] = false;
                 shared_data.board[usize::from(board_position.y)][usize::from(board_position.x)] = None;
 
                 board_position.x = shared_data.cursor_board_pos.x;
@@ -634,7 +641,8 @@ fn check_move_blocked(board: &Vec<Vec<Option<LogicChessPiece>>>,
     return false;
 }
 
-fn check_move_pattern(piece_type: PieceType, piece_color: PieceColor, move_vec: Vec2) -> bool {
+fn check_move_pattern(piece_type: PieceType, piece_color: PieceColor,
+                      move_vec: Vec2, initial_pos: bool) -> bool {
     if move_vec.x == 0. && move_vec.y == 0. {
         return false;
     }
@@ -665,7 +673,11 @@ fn check_move_pattern(piece_type: PieceType, piece_color: PieceColor, move_vec: 
                 || move_vec.x.abs() == 2. && move_vec.y.abs() == 1.
         }
         PieceType::Pawn => {
-            move_vec.x == 0. && move_vec.y == 1.
+            if initial_pos {
+                move_vec.x == 0. && (move_vec.y == 1. || move_vec.y == 2.)
+            } else {
+                move_vec.x == 0. && move_vec.y == 1.
+            }
         }
     };
 }
@@ -687,7 +699,7 @@ fn check_capture_pattern(piece_type: PieceType, piece_color: PieceColor,
             return true;
         }
     } else {
-        return check_move_pattern(piece_type, piece_color, diff);
+        return check_move_pattern(piece_type, piece_color, diff, false);
     }
 
     return false;
@@ -742,7 +754,8 @@ fn setup(
             game_state: WaitingForSelect,
             cursor_board_pos: BoardPosition {x: 0, y: 0},
             current_move: PieceColor::White,
-            board: vec![vec![None; 8]; 8]
+            board: vec![vec![None; 8]; 8],
+            initial_pos: vec![vec![false; 8]; 8]
         });
 }
 
