@@ -5,6 +5,8 @@ use rand::random;
 use crate::GameState::WaitingForSelect;
 use bevy::input::gamepad::GamepadButtonType::Select;
 use bevy::window::WindowId;
+use std::cmp;
+use crate::PieceType::Knight;
 
 struct ChessPiece;
 struct ChessBoard;
@@ -15,7 +17,7 @@ enum PieceColor {
     Black
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum PieceType {
     King,
     Queen,
@@ -155,8 +157,6 @@ fn piece_spawner(commands: &mut Commands, textures: Res<Textures>,
                 PieceType::King, PieceColor::Black,
                 BoardPosition {x: 4, y: 7},
                 &mut shared_data.board);
-
-    print_board(&shared_data.board);
 }
 
 fn spawn_piece(commands: &mut Commands, textures: &Res<Textures>,
@@ -262,8 +262,14 @@ fn board_raycast_system(
     commands: &mut Commands,
     mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), With<ChessBoard>>,
     mut query2: Query<(Entity, &mut Transform, &mut BoardPosition, &Handle<StandardMaterial>, &PieceColor, &PieceType), With<SelectedPiece>>,
+    // mut query3: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>, &PieceColor), With<ChessPiece>>,
+    mut query3: Query<(&InteractableMesh, &BoardPosition, &PieceColor, Entity), Without<SelectedPiece>>,
     textures: Res<Textures>,
     mut materials: ResMut<Assets<StandardMaterial>>, mut shared_data: ResMut<SharedData>) {
+
+    let mut captured_color = PieceColor::White;
+    let mut captured_position = BoardPosition { x: 0, y: 0 };
+    let mut should_capture = false;
 
     if let GameState::PieceSelected = shared_data.game_state {
         let mut flag = false;
@@ -287,7 +293,7 @@ fn board_raycast_system(
 
         if flag {
             for (entity, mut transform, mut board_position,
-                 mut material_handle, piece_color, piece_type) in query2.iter_mut() {
+                mut material_handle, piece_color, piece_type) in query2.iter_mut() {
                 commands.remove_one::<SelectedPiece>(entity);
 
                 let texture = match piece_color {
@@ -299,6 +305,51 @@ fn board_raycast_system(
                 material.albedo = Color::WHITE;
                 material.albedo_texture = Some(texture);
 
+                let dest_field = shared_data.board[usize::from(shared_data.cursor_board_pos.y)]
+                                                                        [usize::from(shared_data.cursor_board_pos.x)];
+                let move_vec = Vec2 { x: shared_data.cursor_board_pos.x as f32 - board_position.x as f32,
+                    y: shared_data.cursor_board_pos.y as f32 - board_position.y as f32 };
+
+                let possible = match dest_field {
+                    None => {
+                        if *piece_type != PieceType::Knight {
+                            check_move_pattern(*piece_type, *piece_color, move_vec)
+                            && !check_move_blocked(&shared_data.board, (*board_position, shared_data.cursor_board_pos))
+                        } else {
+                            check_move_pattern(*piece_type, *piece_color, move_vec)
+                        }
+                    },
+                    Some(dest_piece) => {
+                        if dest_piece.piece_color == *piece_color {
+                            false
+                        } else {
+                            should_capture = true;
+
+                            check_capture_pattern(*piece_type, *piece_color,
+                                      (*board_position, shared_data.cursor_board_pos))
+                            && (*piece_type == PieceType::Knight
+                            || !check_move_blocked(&shared_data.board, (*board_position, shared_data.cursor_board_pos)))
+                        }
+                    }
+                };
+
+                if !possible {
+                    continue;
+                }
+
+                let mut board_copy = shared_data.board.clone();
+                board_copy[usize::from(board_position.y)][usize::from(board_position.x)] = None;
+                board_copy[usize::from(shared_data.cursor_board_pos.y)][usize::from(shared_data.cursor_board_pos.x)] = Some(LogicChessPiece {
+                    piece_color: piece_color.clone(),
+                    piece_type: piece_type.clone()
+                });
+
+                let possible = !check_mate(&board_copy, *piece_color);
+
+                if !possible {
+                    continue;
+                }
+
                 shared_data.board[usize::from(board_position.y)][usize::from(board_position.x)] = None;
 
                 board_position.x = shared_data.cursor_board_pos.x;
@@ -309,13 +360,28 @@ fn board_raycast_system(
                     piece_type: piece_type.clone()
                 });
 
-                print_board(&shared_data.board);
-
                 transform.translation = board_to_global(shared_data.cursor_board_pos);
 
                 shared_data.current_move = match shared_data.current_move {
                     PieceColor::White => PieceColor::Black,
                     PieceColor::Black => PieceColor::White
+                };
+
+                if should_capture {
+                    captured_color = piece_color.clone();
+                    captured_position = board_position.clone();
+                }
+
+                break;
+            }
+
+            if should_capture {
+                for (mesh, board_position, piece_color, entity) in query3.iter() {
+                    if board_position.x == captured_position.x
+                        && board_position.y == captured_position.y
+                        && *piece_color != captured_color {
+                        commands.despawn(entity);
+                    }
                 }
             }
         }
@@ -333,11 +399,298 @@ fn get_board_pos(
             let pos = intersection.position();
 
             let board_pos = BoardPosition {x: (pos.x + 4.).floor() as u8,
-                                           y: (-pos.z + 4.).floor() as u8};
+                y: (-pos.z + 4.).floor() as u8};
             shared_data.cursor_board_pos = board_pos;
         },
         None => ()
     }
+}
+
+fn check_mate(board: &Vec<Vec<Option<LogicChessPiece>>>, color: PieceColor) -> bool {
+    let mut king_pos = BoardPosition {x: 0, y: 0};
+    let mut possible_threats : Vec<(PieceType, BoardPosition)> = Vec::new();
+
+    let enemy_color = match color {
+        PieceColor::White => PieceColor::Black,
+        PieceColor::Black => PieceColor::White
+    };
+
+    for (i, row) in board.iter().enumerate() {
+        for (j, field) in row.iter().enumerate() {
+            match field {
+                None => {}
+                Some(piece) => {
+                    if let PieceType::King = piece.piece_type {
+                        if color == piece.piece_color {
+                            king_pos.x = j as u8;
+                            king_pos.y = i as u8;
+                        }
+                    }
+
+                    if let PieceType::Knight = piece.piece_type {
+                        if piece.piece_color == enemy_color {
+                            possible_threats.push((piece.piece_type,
+                                                   BoardPosition { x: j as u8, y: i as u8 }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check left
+    if king_pos.x > 0 {
+        for i in (0..king_pos.x).rev() {
+            match board[king_pos.y as usize][i as usize] {
+                None => {}
+                Some(piece) => {
+                    if color != piece.piece_color {
+                        possible_threats.push((piece.piece_type, BoardPosition { x: i, y: king_pos.y }));
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+
+    // Check right
+    for i in (king_pos.x + 1)..8 {
+        match board[king_pos.y as usize][i as usize] {
+            None => {}
+            Some(piece) => {
+                if enemy_color == piece.piece_color {
+                    possible_threats.push((piece.piece_type, BoardPosition {x: i, y: king_pos.y}));
+                }
+
+                break;
+            }
+        }
+    }
+
+    // Check up
+    for i in (king_pos.y + 1)..8 {
+        match board[i as usize][king_pos.x as usize] {
+            None => {}
+            Some(piece) => {
+                if enemy_color == piece.piece_color {
+                    possible_threats.push((piece.piece_type, BoardPosition {x: king_pos.x, y: i}));
+                }
+
+                break;
+            }
+        }
+    }
+
+    // Check down
+    if king_pos.y > 0 {
+        for i in (0..king_pos.y).rev() {
+            match board[i as usize][king_pos.x as usize] {
+                None => {}
+                Some(piece) => {
+                    if enemy_color == piece.piece_color {
+                        possible_threats.push((piece.piece_type, BoardPosition { x: king_pos.x, y: i }));
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+
+    // Check upper-left
+    if king_pos.x > 0 {
+        let limit = cmp::min(king_pos.x + 1, 8 - king_pos.y);
+
+        for i in 1..limit {
+            match board[(king_pos.y + i) as usize][(king_pos.x - i) as usize] {
+                None => {}
+                Some(piece) => {
+                    if enemy_color == piece.piece_color {
+                        possible_threats.push((piece.piece_type, BoardPosition { x: king_pos.x - i, y: king_pos.y + i }));
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+
+    // Check upper-right
+    let limit = cmp::min(8 - king_pos.x, 8 - king_pos.y);
+
+    for i in 1..limit {
+        match board[(king_pos.y + i) as usize][(king_pos.x + i) as usize] {
+            None => {}
+            Some(piece) => {
+                if enemy_color == piece.piece_color {
+                    possible_threats.push((piece.piece_type, BoardPosition { x: king_pos.x + i, y: king_pos.y + i }));
+                }
+
+                break;
+            }
+        }
+    }
+
+    // Check lower-right
+    if king_pos.y > 0 {
+        let limit = cmp::min(8 - king_pos.x, king_pos.y + 1);
+
+        for i in 1..limit {
+            match board[(king_pos.y - i) as usize][(king_pos.x + i) as usize] {
+                None => {}
+                Some(piece) => {
+                    if enemy_color == piece.piece_color {
+                        possible_threats.push((piece.piece_type, BoardPosition { x: king_pos.x + i, y: king_pos.y - i }));
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+
+    // Check lower-left
+    if king_pos.x > 0 && king_pos.y > 0 {
+        let limit = cmp::min(king_pos.x + 1, king_pos.y + 1);
+
+        for i in 1..limit {
+            match board[(king_pos.y - i) as usize][(king_pos.x - i) as usize] {
+                None => {}
+                Some(piece) => {
+                    if enemy_color == piece.piece_color {
+                        possible_threats.push((piece.piece_type, BoardPosition { x: king_pos.x - i, y: king_pos.y - i }));
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+
+    for i in possible_threats.iter() {
+        let mut possible = check_capture_pattern(i.0, enemy_color, (i.1, king_pos));
+
+        if possible {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn check_move_blocked(board: &Vec<Vec<Option<LogicChessPiece>>>,
+                      piece_move: (BoardPosition, BoardPosition)) -> bool{
+
+    let (from, to) = piece_move;
+    let mut diff = Vec2 { x: to.x as f32 - from.x as f32,
+        y: to.y as f32 - from.y as f32 };
+
+    if diff.x == 0. && diff.y == 0. {
+        return true;
+    }
+
+    let field = board[piece_move.0.y as usize][piece_move.0.x as usize];
+
+
+    let moved_piece = match field {
+        None => return true,
+        Some(piece) => {
+            piece
+        }
+    };
+
+    let enemy_color = match moved_piece.piece_color {
+        PieceColor::Black => PieceColor::White,
+        PieceColor::White => PieceColor::Black
+    };
+
+    let dir = if diff.x == 0. {
+        Vec2 { x: 0., y: diff.y / diff.y.abs() }
+    } else if diff.y == 0. {
+        Vec2 { x: diff.x / diff.x.abs(), y: 0. }
+    } else {
+        Vec2 { x: diff.x / diff.x.abs(), y: diff.y / diff.y.abs() }
+    };
+
+    let mut checked_pos = Vec2 { x: piece_move.0.x as f32 + dir.x, y: piece_move.0.y as f32 + dir.y };
+
+    while !(checked_pos.x == piece_move.1.x as f32
+        && checked_pos.y == piece_move.1.y as f32) {
+
+        let curr_field = board[checked_pos.y as usize][checked_pos.x as usize];
+
+        match curr_field {
+            None => (),
+            Some(curr_piece) => {
+                return true;
+            }
+        }
+
+        checked_pos.x += dir.x;
+        checked_pos.y += dir.y;
+    }
+
+    return false;
+}
+
+fn check_move_pattern(piece_type: PieceType, piece_color: PieceColor, move_vec: Vec2) -> bool {
+    if move_vec.x == 0. && move_vec.y == 0. {
+        return false;
+    }
+
+    let move_vec = if let PieceColor::Black = piece_color {
+        Vec2 { x: move_vec.x, y: -move_vec.y }
+    } else {
+        move_vec
+    };
+
+    return match piece_type {
+        PieceType::King => {
+            (move_vec.x.abs() == 0. || move_vec.x.abs() == 1.)
+                && (move_vec.y.abs() == 0. || move_vec.y.abs() == 1.)
+        }
+        PieceType::Queen => {
+            move_vec.x.abs() == 0. || move_vec.y.abs() == 0.
+                || move_vec.x.abs() == move_vec.y.abs()
+        }
+        PieceType::Rook => {
+            move_vec.x.abs() == 0. || move_vec.y.abs() == 0.
+        }
+        PieceType::Bishop => {
+            move_vec.x.abs() == move_vec.y.abs()
+        }
+        PieceType::Knight => {
+            move_vec.x.abs() == 1. && move_vec.y.abs() == 2.
+                || move_vec.x.abs() == 2. && move_vec.y.abs() == 1.
+        }
+        PieceType::Pawn => {
+            move_vec.x == 0. && move_vec.y == 1.
+        }
+    };
+}
+
+fn check_capture_pattern(piece_type: PieceType, piece_color: PieceColor,
+                         piece_move: (BoardPosition, BoardPosition)) -> bool {
+    let (from, to) = piece_move;
+
+    let diff = Vec2 { x: to.x as f32 - from.x as f32, y: to.y as f32 - from.y as f32 };
+
+    if let PieceType::Pawn = piece_type {
+        let diff = if let PieceColor::Black = piece_color {
+            Vec2 { x: diff.x, y: -diff.y }
+        } else {
+            diff
+        };
+
+        if diff.x.abs() == 1. && diff.y == 1. {
+            return true;
+        }
+    } else {
+        return check_move_pattern(piece_type, piece_color, diff);
+    }
+
+    return false;
 }
 
 fn setup(
