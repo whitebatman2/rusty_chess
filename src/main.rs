@@ -1,8 +1,8 @@
 use bevy::prelude::*;
-use std::f32::consts::PI;
+use std::f32::consts::{PI, FRAC_PI_2};
 use bevy_mod_picking::*;
 use rand::random;
-use crate::GameState::WaitingForSelect;
+use crate::GameState::{WaitingForSelect, PawnPromoting};
 use bevy::input::gamepad::GamepadButtonType::Select;
 use bevy::window::WindowId;
 use std::cmp;
@@ -10,6 +10,7 @@ use crate::PieceType::Knight;
 
 struct ChessPiece;
 struct ChessBoard;
+struct PromotionSelector;
 
 #[derive(Copy, Clone, PartialEq)]
 enum PieceColor {
@@ -67,7 +68,9 @@ struct SharedData {
 enum GameState {
     WaitingForSelect,
     PieceSelected,
-    PieceMoving
+    PieceMoving,
+    SpawnPromotionSelector(BoardPosition, PieceColor),
+    PawnPromoting(BoardPosition, PieceColor)
 }
 
 fn board_to_global(position: BoardPosition) -> Vec3 {
@@ -376,6 +379,21 @@ fn board_raycast_system(
                     } else {
                         board_position.x = 6;
                     }
+                } else {
+                    if *piece_type == PieceType::Pawn
+                    && (*piece_color == PieceColor::Black && board_position.y == 0 ||
+                        *piece_color == PieceColor::White && board_position.y == 7) {
+                        commands.insert(entity, (SelectedPiece, ));
+
+                        let material = materials.get_mut(material_handle).unwrap();
+
+                        material.albedo_texture = None;
+                        material.albedo = Color::rgb(0.0, 0.0, 1.0);
+
+
+                        shared_data.game_state = GameState::SpawnPromotionSelector (board_position.clone(),
+                                                                                    piece_color.clone());
+                    }
                 }
 
                 transform.translation = board_to_global(*board_position);
@@ -432,6 +450,119 @@ fn board_raycast_system(
             print_board(&shared_data.board);
         }
     }
+}
+
+fn spawn_promotion_selector(commands: &mut Commands, textures: Res<Textures>,
+                            mut materials: ResMut<Assets<StandardMaterial>>, meshes: Res<Meshes>,
+                            mut shared_data: ResMut<SharedData>) {
+    let meshes = [ meshes.queen.clone(), meshes.rook.clone(),
+                                    meshes.bishop.clone(), meshes.knight.clone()];
+    let piece_types = [ PieceType::Queen, PieceType::Rook,
+                                      PieceType::Bishop, PieceType::Knight ];
+
+    let (board_position, piece_color) = match shared_data.game_state {
+        GameState::SpawnPromotionSelector(board_position, piece_color) => {
+            (board_position, piece_color)
+        },
+        _ => return
+    };
+
+    let texture = match piece_color {
+        PieceColor::White => textures.texture_white.clone(),
+        PieceColor::Black => textures.texture_black.clone()
+    };
+
+    let mut rotation_rad: f32 = match piece_color {
+        PieceColor::White => 0.0,
+        PieceColor::Black => PI
+    };
+
+    let mut position = board_to_global(board_position);
+    position.x -= 1.5;
+    position.y += 0.6;
+    position.z += match piece_color {
+        PieceColor::Black => 1.,
+        PieceColor::White => -1.
+    };
+
+    for i in 0..4 {
+        rotation_rad = if piece_types[i] == PieceType::Knight {
+            rotation_rad - FRAC_PI_2
+        } else {
+            rotation_rad
+        };
+
+        commands.spawn(PbrBundle {
+                mesh: meshes[i].clone(),
+                material: materials.add(StandardMaterial {
+                    albedo_texture: Some(texture.clone()),
+                    ..Default::default()
+                }),
+                transform: Transform {
+                    translation: position.clone(),
+                    rotation: Quat::from_rotation_y(rotation_rad),
+                    ..Default::default()
+                },
+                ..Default::default()})
+                .with(PickableMesh::default())
+                .with(InteractableMesh::default())
+                .with(piece_types[i])
+                .with(position)
+                .with(PromotionSelector);
+
+        position.x += 1.;
+    }
+
+    shared_data.game_state = PawnPromoting(board_position.clone(), piece_color.clone());
+}
+
+fn selector_system(commands: &mut Commands,
+                   mut query: Query<(&InteractableMesh, &PieceType, Entity), With<PromotionSelector>>,
+                   mut query2: Query<(&PieceType, Entity, ), With<SelectedPiece>>,
+                   textures: Res<Textures>, mut materials: ResMut<Assets<StandardMaterial>>, meshes: Res<Meshes>,
+                   mut shared_data: ResMut<SharedData>) {
+
+    let (board_position, piece_color) = match shared_data.game_state {
+        GameState::PawnPromoting(board_position, piece_color) => {
+            (board_position, piece_color)
+        },
+        _ => return
+    };
+
+    let mut selected = false;
+    let mut piece_type = PieceType::Queen;
+
+    for (interactable, selected_piece_type, entity) in query.iter() {
+        let mouse_down_event = interactable
+            .mouse_down_event(&Group::default(), MouseButton::Left)
+            .unwrap();
+
+        if mouse_down_event.is_none() {
+            continue;
+        }
+
+        if let MouseDownEvents::MouseJustReleased = mouse_down_event {
+            selected = true;
+            piece_type = selected_piece_type.clone();
+        }
+    }
+
+    if !selected {
+        return;
+    }
+
+    for (interactable, selected_piece_type, entity) in query.iter() {
+        commands.despawn(entity);
+    }
+
+    for (_, entity) in query2.iter() {
+        commands.despawn(entity);
+    }
+
+    spawn_piece(commands, &textures, &mut materials, &meshes, piece_type, piece_color, board_position, &mut shared_data);
+    shared_data.initial_pos[board_position.y as usize][board_position.x as usize] = false;
+
+    shared_data.game_state = GameState::WaitingForSelect;
 }
 
 fn get_board_pos(
@@ -902,5 +1033,7 @@ fn main() {
         .add_system(piece_raycast_system.system())
         .add_system(board_raycast_system.system())
         .add_system(get_board_pos.system())
+        .add_system(spawn_promotion_selector.system())
+        .add_system(selector_system.system())
         .run();
 }
