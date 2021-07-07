@@ -266,14 +266,14 @@ fn board_raycast_system(
     commands: &mut Commands,
     mut query: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>), With<ChessBoard>>,
     mut query2: Query<(Entity, &mut Transform, &mut BoardPosition, &Handle<StandardMaterial>, &PieceColor, &PieceType), With<SelectedPiece>>,
-    // mut query3: Query<(&InteractableMesh, Entity, &Handle<StandardMaterial>, &PieceColor), With<ChessPiece>>,
-    mut query3: Query<(&InteractableMesh, &BoardPosition, &PieceColor, Entity), Without<SelectedPiece>>,
+    mut query3: Query<(&InteractableMesh, &mut Transform, &mut BoardPosition, &PieceColor, &PieceType, Entity), Without<SelectedPiece>>,
     textures: Res<Textures>,
     mut materials: ResMut<Assets<StandardMaterial>>, mut shared_data: ResMut<SharedData>) {
 
     let mut captured_color = PieceColor::White;
     let mut captured_position = BoardPosition { x: 0, y: 0 };
     let mut should_capture = false;
+    let mut should_castle = false;
 
     if let GameState::PieceSelected = shared_data.game_state {
         let mut flag = false;
@@ -314,7 +314,7 @@ fn board_raycast_system(
                 let move_vec = Vec2 { x: shared_data.cursor_board_pos.x as f32 - board_position.x as f32,
                     y: shared_data.cursor_board_pos.y as f32 - board_position.y as f32 };
 
-                let possible = match dest_field {
+                let mut possible = match dest_field {
                     None => {
                         let initial_pos = shared_data.initial_pos[usize::from(board_position.y)][usize::from(board_position.x)];
 
@@ -327,7 +327,13 @@ fn board_raycast_system(
                     },
                     Some(dest_piece) => {
                         if dest_piece.piece_color == *piece_color {
-                            false
+                            if *piece_type == PieceType::King && dest_piece.piece_type == PieceType::Rook
+                            && check_castling(&shared_data.board, &shared_data.initial_pos, (*board_position, shared_data.cursor_board_pos)) {
+                                should_castle = true;
+                                true
+                            } else {
+                                false
+                            }
                         } else {
                             should_capture = true;
 
@@ -343,14 +349,16 @@ fn board_raycast_system(
                     continue;
                 }
 
-                let mut board_copy = shared_data.board.clone();
-                board_copy[usize::from(board_position.y)][usize::from(board_position.x)] = None;
-                board_copy[usize::from(shared_data.cursor_board_pos.y)][usize::from(shared_data.cursor_board_pos.x)] = Some(LogicChessPiece {
-                    piece_color: piece_color.clone(),
-                    piece_type: piece_type.clone()
-                });
+                if !should_castle {
+                    let mut board_copy = shared_data.board.clone();
+                    board_copy[usize::from(board_position.y)][usize::from(board_position.x)] = None;
+                    board_copy[usize::from(shared_data.cursor_board_pos.y)][usize::from(shared_data.cursor_board_pos.x)] = Some(LogicChessPiece {
+                        piece_color: piece_color.clone(),
+                        piece_type: piece_type.clone()
+                    });
 
-                let possible = !check_mate(&board_copy, *piece_color);
+                    possible = !check_mate(&board_copy, *piece_color);
+                }
 
                 if !possible {
                     continue;
@@ -362,32 +370,55 @@ fn board_raycast_system(
                 board_position.x = shared_data.cursor_board_pos.x;
                 board_position.y = shared_data.cursor_board_pos.y;
 
+                if should_castle {
+                    if board_position.x == 0 {
+                        board_position.x = 2;
+                    } else {
+                        board_position.x = 6;
+                    }
+                }
+
+                transform.translation = board_to_global(*board_position);
+
                 shared_data.board[usize::from(board_position.y)][usize::from(board_position.x)] = Some(LogicChessPiece {
                     piece_color: piece_color.clone(),
                     piece_type: piece_type.clone()
                 });
-
-                transform.translation = board_to_global(shared_data.cursor_board_pos);
 
                 shared_data.current_move = match shared_data.current_move {
                     PieceColor::White => PieceColor::Black,
                     PieceColor::Black => PieceColor::White
                 };
 
-                if should_capture {
+                if should_capture || should_castle {
                     captured_color = piece_color.clone();
-                    captured_position = board_position.clone();
+                    captured_position = shared_data.cursor_board_pos.clone();
                 }
 
                 break;
             }
 
-            if should_capture {
-                for (mesh, board_position, piece_color, entity) in query3.iter() {
+            if should_capture || should_castle {
+                for (mesh, mut transform, mut board_position,
+                     piece_color, piece_type, entity) in query3.iter_mut() {
                     if board_position.x == captured_position.x
-                        && board_position.y == captured_position.y
-                        && *piece_color != captured_color {
-                        commands.despawn(entity);
+                        && board_position.y == captured_position.y {
+
+                        if should_capture && *piece_color != captured_color {
+                            commands.despawn(entity);
+                        }
+
+                        if should_castle && *piece_color == captured_color {
+                            if let PieceType::Rook = *piece_type {
+                                if board_position.x == 0 {
+                                    board_position.x = 3;
+                                } else {
+                                    board_position.x = 5;
+                                }
+
+                                transform.translation = board_to_global(*board_position);
+                            }
+                        }
                     }
                 }
             }
@@ -703,6 +734,63 @@ fn check_capture_pattern(piece_type: PieceType, piece_color: PieceColor,
     }
 
     return false;
+}
+
+fn check_castling(board: &Vec<Vec<Option<LogicChessPiece>>>, initial_pos: &Vec<Vec<bool>>,
+                  checked_move: (BoardPosition, BoardPosition)) -> bool {
+    let (from, to) = checked_move;
+
+    if !initial_pos[from.y as usize][from.x as usize]
+        || !initial_pos[to.y as usize][to.x as usize] {
+        return false;
+    }
+
+    let source_field = board[from.y as usize][from.x as usize];
+    let mut piece_color = PieceColor::White;
+
+    match source_field {
+        None => { return false },
+        Some(source_piece) => {
+            piece_color = source_piece.piece_color.clone();
+        }
+    }
+
+    let dir: i8 = if checked_move.0.x > checked_move.1.x {
+        -1
+    } else {
+        1
+    };
+
+    let mut checked_pos = from.clone();
+
+    for i in 1u8..3 {
+        checked_pos.x = (checked_pos.x as i8 + dir) as u8;
+        let checked_field = board[checked_pos.y as usize][checked_pos.x as usize];
+
+        match checked_field {
+            None => {
+                let mut board_copy = board.clone();
+                board_copy[checked_move.0.y as usize][checked_move.0.x as usize] = None;
+                board_copy[checked_pos.y as usize][checked_pos.x as usize] = Some(LogicChessPiece {
+                    piece_color: piece_color.clone(),
+                    piece_type: PieceType::King
+                });
+
+                if check_mate(&board_copy, piece_color) {
+                    return false;
+                }
+            },
+            Some(_) => {
+                return false;
+            }
+        }
+    }
+
+    if checked_move.1.x == 0 && !matches!(board[checked_move.1.y as usize][1], None) {
+        return false;
+    }
+
+    return true;
 }
 
 fn setup(
