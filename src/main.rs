@@ -410,6 +410,8 @@ fn board_raycast_system(
 
                         if should_castle && *piece_color == captured_color {
                             if let PieceType::Rook = *piece_type {
+                                shared_data.board[board_position.y as usize][board_position.x as usize] = None;
+
                                 if board_position.x == 0 {
                                     board_position.x = 3;
                                 } else {
@@ -417,11 +419,17 @@ fn board_raycast_system(
                                 }
 
                                 transform.translation = board_to_global(*board_position);
+                                shared_data.board[board_position.y as usize][board_position.x as usize] = Some(LogicChessPiece {
+                                    piece_color: piece_color.clone(),
+                                    piece_type: PieceType::Rook
+                                });
                             }
                         }
                     }
                 }
             }
+
+            print_board(&shared_data.board);
         }
     }
 }
