@@ -7,6 +7,8 @@ use bevy::input::gamepad::GamepadButtonType::Select;
 use bevy::window::WindowId;
 use std::cmp;
 use crate::PieceType::Knight;
+use bevy::input::mouse::{MouseMotion, MouseButtonInput, MouseWheel};
+use bevy::render::camera::Camera;
 
 struct ChessPiece;
 struct ChessBoard;
@@ -62,7 +64,10 @@ struct SharedData {
     cursor_board_pos: BoardPosition,
     current_move: PieceColor,
     board: Vec<Vec<Option<LogicChessPiece>>>,
-    initial_pos: Vec<Vec<bool>>
+    initial_pos: Vec<Vec<bool>>,
+    rotating: bool,
+    rotation_angle: Vec3,
+    camera_distance: f32
 }
 
 enum GameState {
@@ -565,6 +570,87 @@ fn selector_system(commands: &mut Commands,
     shared_data.game_state = GameState::WaitingForSelect;
 }
 
+fn camera_rotation_system(
+    evt_motion: Res<Events<MouseMotion>>,
+    mut evr_motion: Local<EventReader<MouseMotion>>,
+    evt_mousebtn: Res<Events<MouseButtonInput>>,
+    mut evr_mousebtn: Local<EventReader<MouseButtonInput>>,
+    evt_scroll: Res<Events<MouseWheel>>,
+    mut evr_scroll: Local<EventReader<MouseWheel>>,
+
+    mut shared_data: ResMut<SharedData>,
+    mut query: Query<(&mut Transform, ), With<Camera>>,
+    mut query2: Query<(&mut Transform, ), With<Light>>) {
+
+    let mut update_needed = false;
+
+    for e in evr_scroll.iter(&evt_scroll) {
+        shared_data.camera_distance -= e.y * 0.1;
+
+        if shared_data.camera_distance < 9. {
+            shared_data.camera_distance = 9.
+        } else if shared_data.camera_distance > 20. {
+            shared_data.camera_distance = 20.
+        }
+
+        update_needed = true;
+    }
+
+    if shared_data.rotating {
+        for e in evr_motion.iter(&evt_motion) {
+            shared_data.rotation_angle.x += e.delta.y / (16. * PI);
+            shared_data.rotation_angle.y += e.delta.x / (16. * PI);
+
+            if shared_data.rotation_angle.x > PI / 2. - PI / 360. {
+                shared_data.rotation_angle.x = PI / 2. - PI / 360.;
+            }
+
+            if shared_data.rotation_angle.x < 5. * PI / 180. {
+                shared_data.rotation_angle.x = 5. * PI / 180.;
+            }
+
+            while shared_data.rotation_angle.y >= 2. * PI {
+                shared_data.rotation_angle.y -= 2. * PI;
+            }
+
+            update_needed = true;
+        }
+    }
+
+    if update_needed {
+        let radius = shared_data.camera_distance;
+
+        let tmp_transform = Transform::from_translation(Vec3::new(
+            radius * shared_data.rotation_angle.x.cos() * shared_data.rotation_angle.y.cos(),
+            radius * shared_data.rotation_angle.x.sin(),
+            radius * shared_data.rotation_angle.x.cos() * shared_data.rotation_angle.y.sin()))
+            .looking_at(Vec3::default(), Vec3::unit_y());
+
+        for (mut transform, ) in query.iter_mut() {
+            transform.translation = tmp_transform.translation;
+            transform.rotation = tmp_transform.rotation;
+        }
+
+        for (mut transform, ) in query2.iter_mut() {
+            transform.translation = tmp_transform.translation;
+            transform.rotation = tmp_transform.rotation;
+        }
+    }
+
+    for e in evr_mousebtn.iter(&evt_mousebtn) {
+
+        if e.button != MouseButton::Right {
+            continue;
+        }
+
+        if e.state.is_pressed() {
+            shared_data.rotating = true;
+        } else {
+            shared_data.rotating = false;
+        }
+    }
+}
+
 fn get_board_pos(
     pick_state: Res<PickState>,
     mut shared_data: ResMut<SharedData>
@@ -960,7 +1046,7 @@ fn setup(
             ..Default::default()
         })
         .spawn(Camera3dBundle {
-            transform: Transform::from_translation(Vec3::new(0.0, 10.0, 8.0))
+            transform: Transform::from_translation(Vec3::new(0.0, 10.0, 10.0))
                 .looking_at(Vec3::default(), Vec3::unit_y()),
             ..Default::default()
         })
@@ -982,7 +1068,10 @@ fn setup(
             cursor_board_pos: BoardPosition {x: 0, y: 0},
             current_move: PieceColor::White,
             board: vec![vec![None; 8]; 8],
-            initial_pos: vec![vec![false; 8]; 8]
+            initial_pos: vec![vec![false; 8]; 8],
+            rotating: false,
+            rotation_angle: Vec3::new(PI / 4., PI / 2., 0.),
+            camera_distance: (200.0_f32).sqrt()
         });
 }
 
@@ -1025,6 +1114,10 @@ fn print_board(board: &Vec<Vec<Option<LogicChessPiece>>>) {
 fn main() {
     App::build()
         .add_resource(ClearColor(Color::rgb(0.2, 0.2, 0.2)))
+        .add_resource(WindowDescriptor {
+            title: "rusty_chess".to_string(),
+            ..Default::default()
+        })
         .add_plugins(DefaultPlugins)
         .add_plugin(PickingPlugin)
         .add_plugin(InteractablePickingPlugin)
@@ -1035,5 +1128,6 @@ fn main() {
         .add_system(get_board_pos.system())
         .add_system(spawn_promotion_selector.system())
         .add_system(selector_system.system())
+        .add_system(camera_rotation_system.system())
         .run();
 }
