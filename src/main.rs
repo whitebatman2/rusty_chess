@@ -585,7 +585,7 @@ fn camera_rotation_system(
     let mut update_needed = false;
 
     for e in evr_scroll.iter(&evt_scroll) {
-        shared_data.camera_distance -= e.y * 0.1;
+        shared_data.camera_distance -= e.y * 0.8;
 
         if shared_data.camera_distance < 9. {
             shared_data.camera_distance = 9.
